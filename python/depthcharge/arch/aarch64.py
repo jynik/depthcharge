@@ -4,6 +4,9 @@
 ARM64 (ARMv8-A) support
 """
 
+import os
+import re
+
 from .arch import Architecture
 
 class AARCH64(Architecture):
@@ -28,8 +31,49 @@ class AARCH64(Architecture):
     _supports_64bit_data = True
 
     _regs = {
-
+        'elr':  { 'ident': 0x5e },
+        'lr':   { 'ident': 0x5f },
+        'x0':   { 'ident': 0x60 },
+        'x1':   { 'ident': 0x61 },
+        'x2':   { 'ident': 0x62 },
+        'x3':   { 'ident': 0x63 },
+        'x4':   { 'ident': 0x64 },
+        'x5':   { 'ident': 0x65 },
+        'x6':   { 'ident': 0x66 },
+        'x7':   { 'ident': 0x67 },
+        'x8':   { 'ident': 0x68 },
+        'x9':   { 'ident': 0x69 },
+        'x10':  { 'ident': 0x6a },
+        'x11':  { 'ident': 0x6b },
+        'x12':  { 'ident': 0x6c },
+        'x13':  { 'ident': 0x6d },
+        'x14':  { 'ident': 0x6e },
+        'x15':  { 'ident': 0x6f },
+        'x16':  { 'ident': 0x70 },
+        'x17':  { 'ident': 0x71 },
+        'x18':  { 'ident': 0x72 },
+        'x19':  { 'ident': 0x73 },
+        'x20':  { 'ident': 0x74 },
+        'x21':  { 'ident': 0x75 },
+        'x22':  { 'ident': 0x76 },
+        'x23':  { 'ident': 0x77 },
+        'x24':  { 'ident': 0x78 },
+        'x25':  { 'ident': 0x79 },
+        'x26':  { 'ident': 0x7a },
+        'x27':  { 'ident': 0x7b },
+        'x28':  { 'ident': 0x7c },
+        'x29':  { 'ident': 0x7d },
     }
+
+    _DA_ENTRY = re.compile(r"""
+        (?P<name>[a-zA-Z][a-zA-Z0-9]+)
+        \s?:\s?
+        (?P<value>[0-9a-fA-F]{16})
+    """, re.VERBOSE)
+
+    _ESR_ENTRY = re.compile(r"""
+        esr\s+0x(?P<value>[0-9a-fA-F]+)
+    """, re.VERBOSE)
 
     @classmethod
     def parse_data_abort(cls, text: str) -> dict:
@@ -65,6 +109,37 @@ class AARCH64(Architecture):
             line = line.strip()
 
             pfx = ""
-            if line.endswith('(reloc)'):
-                line = line[:-len('(reloc)')]
-                pfx = "reloc"
+            match = cls._ESR_ENTRY.search(line)
+            if match:
+                ret['esr'] = int(match.group('value'), 16)
+
+            elif line.startswith('Code:'):
+                ret['code'] = cls._parse_instructions(line)
+
+            else:
+                pfx = ''
+                if line.endswith('(reloc)'):
+                    line = line[:-len('(reloc)')]
+                    pfx = 'reloc '
+
+
+                for match in cls._DA_ENTRY.finditer(line):
+                    regname, _ = cls.register(match.group('name'))
+                    name = pfx + regname
+                    value = match.group('value')
+
+                    regs = ret.get('registers', {})
+
+                    try:
+                        regs[name] = int(value, 16)
+                    except ValueError:
+                        regs[name] = int(value, 10)
+
+                    ret['registers'] = regs
+
+        if not ret:
+            msg = 'No data abort content found in the following text:' + os.linesep
+            msg += text
+            raise ValueError(msg)
+
+        return ret
